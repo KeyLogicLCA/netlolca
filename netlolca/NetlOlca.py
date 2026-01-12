@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import copy
 
 import yaml
 import olca_ipc as ipc
@@ -1673,6 +1674,468 @@ class NetlOlca(object):
 
         return s_list
 
+    def get_process_actors(self, uuid):
+        """
+        Return a list of actors for a given process.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        -------
+        list
+            A list of actor objects for the given process.
+        """
+        a_list = []
+        if uuid in self.get_spec_ids(o.Process):
+            obj = self.query(o.Process, uuid)
+            if obj.process_documentation.data_documentor:
+                a_list.append(obj.process_documentation.data_documentor)
+            elif obj.process_documentation.data_generator and obj.process_documentation.data_generator not in a_list:
+                a_list.append(obj.process_documentation.data_generator)
+            elif obj.process_documentation.data_set_owner and obj.process_documentation.data_set_owner not in a_list:
+                a_list.append(obj.process_documentation.data_set_owner)
+            
+        return a_list
+
+    def get_process_dq_system(self, uuid):
+        """
+        Return a list of DQ systems for a given process.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        -------
+        list
+            A list of DQ system objects used in the given process.
+        """
+        dq_system = []
+        if uuid in self.get_spec_ids(o.Process):
+            obj = self.query(o.Process, uuid)
+            
+            if obj.dq_system and obj.dq_system not in dq_system:
+                dq_system.append(obj.dq_system)
+
+            if obj.exchange_dq_system and obj.exchange_dq_system not in dq_system:
+                dq_system.append(obj.exchange_dq_system)
+
+        return dq_system
+
+    def get_process_location(self, uuid):
+        """
+        Return a location for a given process.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        -------
+        olca_schema.schema.Location
+            A Location class object for the given process.
+        """
+        location = None
+        if uuid in self.get_spec_ids(o.Process):
+            obj = self.query(o.Process, uuid)
+            location = obj.location
+        return location
+
+    def get_process_parameters(self, uuid):
+        """
+        Return a list of parameters uuids for a given process.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        -------
+        list
+            A list of parameter objects for the given process.
+        """
+        param_list = []
+        if uuid in self.get_spec_ids(o.Process):
+            obj = self.query(o.Process, uuid)
+            param_list.append(obj.parameters)
+        return param_list
+
+    def get_process_flows(self, uuid):
+        """
+        Return a list of flows for a given process.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        ------- 
+        list
+            A list of flow objects for the given process.
+        """
+        flow_list = []
+        if uuid in self.get_spec_ids(o.Process):
+            obj = self.query(o.Process, uuid)
+            for exch in obj.exchanges:
+                if exch.flow:
+                    flow_list.append(exch.flow)
+        return flow_list
+
+    def get_process_flow_properties(self, uuid):
+        """
+        Return a list of flow properties for a given process.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        -------
+        list
+            A list of flow property objects for the given process.
+        """
+        fp_list = []
+        if uuid in self.get_spec_ids(o.Process):
+            obj = self.query(o.Process, uuid)
+            for exch in obj.exchanges:
+                if exch.flow_property:
+                    fp_list.append(exch.flow_property)
+        return fp_list
+
+    def get_default_providers(self, uuid):
+        """
+        Return a list of default providers for a given process.
+
+        This function goes through all exchanges of a process, 
+        identifies the default providers, and returns a list of default provider objects.
+        Then the function goe through the exchanges of the default providers,
+        identifies their default providers, and appends them to the list if they are not already in the list.
+        
+
+        This process is repeated until all default providers are found.
+
+        Parameters
+        ----------
+        uuid : str
+            The UUID of the process.
+
+        Returns
+        -------
+        list
+            A list of default provider objects for the given process.
+        """
+        provider_list = []
+        seen = set()
+        to_be_checked = [uuid]
+        spec_ids = set(self.get_spec_ids(o.Process))
+            
+        while to_be_checked:
+            uuid_being_checked = to_be_checked.pop()
+
+            if uuid_being_checked in seen:
+                continue
+            seen.add(uuid_being_checked)
+
+            if uuid_being_checked not in spec_ids:
+                continue
+            
+            obj = self.query(o.Process, uuid_being_checked)
+
+            for exch in obj.exchanges:
+                if not exch.default_provider:
+                    continue
+                
+                dp = exch.default_provider.id
+            
+                if dp not in provider_list:
+                    provider_list.append(dp)
+                
+                if dp not in seen:
+                    to_be_checked.append(dp)
+
+        return provider_list
+
+    def get_full_dd_root_entities_dict (self, uuid_list):
+        """
+        This method takes a list of uuids for select processes
+        and returns a dictionary of root entities that are associated with these processes.
+
+        The main application of this method is to get the root entities dictionary of a 
+        potential derivative database.
+
+        The returned dictionary consists of 17 keys for the different root entities:
+        1- Actors, 2- Currency, 3- DQ system, 4- EPD, 5- Flow, 6- Flow property, 7- Impact 
+        categories, 8- Impact methods, 9- Location, 10- Parameter, 11- Process, 12- Product 
+        system, 13- Project, 14- Result, 15- Social indicators, 16- Source, 17- UnitGroup.
+
+        Each root entity key contains a dictionary with the original fields of the root entity:
+        1- name, 2- display, 3- info, 4- class, 5- yaml, 6-ids, 7- objs
+
+        Assumptions:
+        ------------
+        1- The fields that will be updated based on the target processes are:
+        Actors, DQ System, Flow, Flow property, Process, Location, Parameter, Source
+
+        2- This method retains the original fields of the source database for the following 
+        root entities:
+        Currency, EPD, Impact categories, Impact methods, UnitGroup
+
+        3- This method resets the following root entities data:
+        Product system, Project, Result, Social indicators
+
+        Parameters
+        ----------
+        uuid_list : list
+            A list of uuids for select processes.
+
+        Returns
+        -------
+        dict
+            A dictionary of root entities that are associated with the target processes.
+
+        Example
+        -------
+        >>> uuid_list = ["123e4567-e89b-12d3-a456-426614174000"]
+        >>> dd_root_entities_dict = self.get_dd_root_entities_dict(uuid_list)
+        >>> print(dd_root_entities_dict)
+
+        """
+        # get the root entities dictionary of the full database and filter it out
+        full_dict = copy.deepcopy(self._spec_map)
+
+        # get full list of uuids in derivative database
+        ddb_uuids = []
+        for uuid in uuid_list:
+            ddb_uuids.append(uuid)
+            ddb_uuids += self.get_default_providers(uuid)
+        uuid_list = list(set(ddb_uuids)) # remove duplicates
+
+        # create new field to store objs for each root entity
+        n = list(range(1,18))
+        for i in n:
+            full_dict [i]["objs"] = []
+
+        # reset the 'ids' field for process-specific root entities
+        n = [1,3,5,6,9,10,11,16]
+        for i in n:
+            full_dict [i]["ids"] = []
+
+        for uuid in uuid_list:
+            # actors #1
+            actors = self.get_process_actors(uuid)
+            if actors:
+                for actor in actors: 
+                    if actor.id not in full_dict [1]["ids"]:
+                        full_dict [1]["ids"].append(actor.id) 
+                        full_dict [1]["objs"].append(self.query(o.Actor, actor.id))
+            # Currency #2 - kept as is
+            for id in full_dict [2]["ids"]:
+                if self.query(o.Currency, id) not in full_dict [2]["objs"]:
+                    full_dict [2]["objs"].append(self.query(o.Currency, id))
+            # DQ system #3
+            dq_systems = self.get_process_dq_system(uuid)
+            if dq_systems:
+                for dq_system in dq_systems:
+                    if dq_system.id not in full_dict [3]["ids"]:
+                        full_dict [3]["ids"].append(dq_system.id)
+                        full_dict [3]["objs"].append(self.query(o.DQSystem, dq_system.id))
+            # EPD #4 - kept as is
+            for id in full_dict [4]["ids"]:
+                if self.query(o.EPD, id) not in full_dict [4]["objs"]:
+                    full_dict [4]["objs"].append(self.query(o.EPD, id))
+            # Flow #5
+            flows = self.get_process_flows(uuid)
+            if flows:
+                for flow in flows:
+                    if flow.id not in full_dict [5]["ids"]:
+                        full_dict [5]["ids"].append(flow.id)
+                        full_dict [5]["objs"].append(self.query(o.Flow, flow.id))
+            # Flow property #6
+            flow_properties = self.get_process_flow_properties(uuid)
+            if flow_properties:
+                for flow_property in flow_properties:
+                    if flow_property.id not in full_dict [6]["ids"]:
+                        full_dict [6]["ids"].append(flow_property.id)
+                        full_dict [6]["objs"].append(self.query(o.FlowProperty, flow_property.id))
+            # Location #9
+            locations = self.get_process_location(uuid)
+            if locations:
+                if isinstance(locations, list):
+                    for location in locations:
+                        if location.id not in full_dict [9]["ids"]:
+                            full_dict [9]["ids"].append(location.id)
+                            full_dict [9]["objs"].append(self.query(o.Location, location.id))
+                else:
+                    if locations.id not in full_dict [9]["ids"]:
+                        full_dict [9]["ids"].append(locations.id)
+                        full_dict [9]["objs"].append(self.query(o.Location, locations.id))
+            # Parameter #10
+            parameters = self.get_process_parameters(uuid)
+            if parameters:
+                for parameter in parameters[0]:
+                    if parameter.id not in full_dict [10]["ids"]:
+                        full_dict [10]["ids"].append(parameter.id)
+                        full_dict [10]["objs"].append(self.query(o.Parameter, parameter.id))
+            # Process #11 - adjusted based on final list of uuids
+            if uuid not in full_dict [11]["ids"]:
+                full_dict [11]["ids"].append(uuid)
+                full_dict [11]["objs"].append(self.query(o.Process, uuid))
+            # Source #16
+            sources = self.get_process_sources(uuid)
+            if sources:
+                for source in sources:
+                    if source.id not in full_dict [16]["ids"]:
+                        full_dict [16]["ids"].append(source.id)
+                        full_dict [16]["objs"].append(self.query(o.Source, source.id))
+
+        # Impact categories #7 - kept as is
+        print ("resolving impact categories")
+        for id in full_dict [7]["ids"]:
+            full_dict [7]["objs"].append(self.query(o.ImpactCategory, id))
+        # Impact methods #8 - kept as it
+        print ("resolving impact methods")
+        for id in full_dict [8]["ids"]:
+            full_dict [8]["objs"].append(self.query(o.ImpactMethod, id))
+        # remove Product system, project, result, and social indicators ids
+        full_dict [12]["ids"] = []
+        full_dict [13]["ids"] = []
+        full_dict [14]["ids"] = []
+        full_dict [15]["ids"] = []
+        # UnitGroup #17 - kept as is
+        for id in full_dict [17]["ids"]:
+            full_dict [17]["objs"].append(self.query(o.UnitGroup, id))
+        
+        return full_dict
+
+    # NOTE FOR TYLER - I MADE THIS ONE FIRST - IT DOESNT RETURN OBJS
+    # BUT I THOUGHT I'D KEEP IT - MIGHT BE USEFUL IN VALIDATION 
+    # I ASSUME ITS FASTER THAN THE FIRST ONE
+    def get_dd_root_entities_dict (self, uuid_list):
+        """
+        This method takes a list of uuids for select processes
+        and returns a dictionary of root entities that are associated with these processes.
+
+        The main application of this method is to get the root entities dictionary of a 
+        potential derivative database.
+
+        The returned dictionary consists of 17 keys for the different root entities:
+        1- Actors, 2- Currency, 3- DQ system, 4- EPD, 5- Flow, 6- Flow property, 7- Impact 
+        categories, 8- Impact methods, 9- Location, 10- Parameter, 11- Process, 12- Product 
+        system, 13- Project, 14- Result, 15- Social indicators, 16- Source, 17- UnitGroup.
+
+        Each root entity key contains a dictionary with the original fields of the root entity:
+        1- name, 2- display, 3- info, 4- class, 5- yaml, 6-ids
+
+        Assumptions:
+        1- The fields that will be updated based on the target processes are:
+        Actors, DQ System, Flow, Flow property, Process, Location, Parameter, Source
+
+        2- This method retains the original fields of the source database for the following 
+        root entities:
+        Currency, EPD, Impact categories, Impact methods, UnitGroup
+
+        3- This method resets the following root entities data:
+        Product system, Project, Result, Social indicators
+
+        Parameters
+        ----------
+        uuid_list : list
+            A list of uuids for select processes.
+
+        Returns
+        -------
+        dict
+            A dictionary of root entities that are associated with the target processes.
+
+        Example
+        -------
+        >>> uuid_list = ["123e4567-e89b-12d3-a456-426614174000"]
+        >>> dd_root_entities_dict = self.get_dd_root_entities_dict(uuid_list)
+        >>> print(dd_root_entities_dict)
+
+        """
+        # get the root entities dictionary of the full database and filter it out
+        full_dict = copy.deepcopy(self._spec_map)
+
+        # get full list of uuids in derivative database incl. target processes and their 
+        # default providers
+        ddb_uuids = []
+        for uuid in uuid_list:
+            ddb_uuids.append(uuid)
+            ddb_uuids += self.get_default_providers(uuid)
+        uuid_list = list(set(ddb_uuids)) # remove duplicates
+
+        # reset the 'ids' field for process-specific root entities
+        n = [1,3,5,6,9,10,11,16]
+        for i in n:
+            full_dict [i]["ids"] = []
+
+        for uuid in uuid_list:
+            # actors #1
+            actors = self.get_process_actors(uuid)
+            if actors:
+                for actor in actors:
+                    if actor.id not in full_dict [1]["ids"]:
+                        full_dict [1]["ids"].append(self.query(o.Actor, actor.id))
+            # DQ system #3
+            dq_systems = self.get_process_dq_system(uuid)
+            if dq_systems:
+                for dq_system in dq_systems:
+                    if dq_system.id not in full_dict [3]["ids"]:
+                        full_dict [3]["ids"].append(self.query(o.DQSystem, dq_system.id))
+            # Flow #5
+            flows = self.get_process_flows(uuid)
+            if flows:
+                for flow in flows:
+                    if flow.id not in full_dict [5]["ids"]:
+                        full_dict [5]["ids"].append(self.query(o.Flow, flow.id))
+            # Flow property #6
+            flow_properties = self.get_process_flow_properties(uuid)
+            if flow_properties:
+                for flow_property in flow_properties:
+                    if flow_property.id not in full_dict [6]["ids"]:
+                        full_dict [6]["ids"].append(self.query(o.FlowProperty, flow_property.id))           
+            # Location #9
+            locations = self.get_process_location(uuid)
+            if locations:
+                if isinstance(locations, list):
+                    for location in locations:
+                        if location.id not in full_dict [9]["ids"]:
+                            full_dict [9]["ids"].append(self.query(o.Location, location.id))
+                else:
+                    if locations.id not in full_dict [9]["ids"]:
+                        full_dict [9]["ids"].append(self.query(o.Location, locations.id))
+            # Parameter #10
+            parameters = self.get_process_parameters(uuid)
+            if parameters:
+                for parameter in parameters[0]:
+                    if parameter.id not in full_dict [10]["ids"]:
+                        full_dict [10]["ids"].append(self.query(o.Parameter, parameter.id))  
+            # Processes
+            full_dict [11]["ids"] = [id for id in full_dict [11]["ids"] if id in uuid_list]
+            # Source #16
+            if self.get_process_sources(uuid):
+                for source in self.get_process_sources(uuid):
+                    if source.id not in full_dict [16]["ids"]:
+                        full_dict [16]["ids"].append(source.id)
+        # remove Product system, project, and result ids
+        full_dict [12]["ids"] = []
+        full_dict [13]["ids"] = []
+        full_dict [14]["ids"] = []
+        full_dict [15]["ids"] = []
+        
+        return full_dict
+
+
+
     def get_sources(self, uuid, all_p=False):
         # Sources are bound to a process's documentation attribute.
         # There are two routes: the reference process or all processes.
@@ -2953,3 +3416,13 @@ def writeout(fpath, dstring):
         pass
     else:
         OUT.close()
+
+#
+# SANDBOX
+#
+
+if __name__ == "__main__":
+    netl = NetlOlca()
+    netl.connect()
+    netl.read()
+
