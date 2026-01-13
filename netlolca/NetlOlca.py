@@ -29,7 +29,7 @@ interacting with GreenDelta's openLCA (version 2) either directly (via the
 IPC server) or indirectly (via an exported JSON-LD zip file).
 
 Last Edited:
-    2026-01-12
+    2026-01-13
 
 Examples
 --------
@@ -1363,7 +1363,7 @@ class NetlOlca(object):
         self.logger.info("Failed to find exchange ID, %d" % ex_id)
         return None
 
-    def get_flows(self, uuid=None, inputs=True, outputs=True):
+    def get_flows(self, uuid=None, inputs=True, outputs=True, as_dict=True):
         """Return dictionary of flow data associated with a process's exchanges.
 
         If no UUID is provided (or a UUID of a product system), then the
@@ -1377,18 +1377,33 @@ class NetlOlca(object):
             If input flows are requested, by default true
         outputs : bool, optional
             If output flows are requested, by default true
+        as_dict : bool, optional
+            Whether to return exchange table as a dictionary (e.g., for
+            easy use with pandas data frames).
 
         Returns
         -------
-        dict
-            A dictionary with 'name', 'amount', 'unit', 'category', 'uuid',
-            'tracked', 'description', 'provider', and 'dq' (data quality)
+        dict, list
+            If ``as_dict`` is true, the return object is a dictionary with
+            'name', 'amount', 'unit', 'category', 'uuid', 'tracked',
+            'description', 'provider', and 'dq' (data quality)
             fields formatted ready for conversion to a pandas data frame.
+            If ``as_dict`` is false, the return object is a list of reference
+            objects to flows.
 
         Notes
         -----
         The data quality index is a string (e.g., '(1;3;2;5;1)').
+
+        Examples
+        --------
+        >>> n = NetlOlca()
+        >>> n.connect()
+        >>> n.read()
+        >>> uid = '71b559b7-ac85-498d-80e3-70faa5d9936d'
+        >>> pd.DataFrame(n.get_flows(uid, False, True, True))
         """
+        # Initialize the empty dictionary for UP template data frame
         r_dict = {
             'name': [],
             'amount': [],
@@ -1400,10 +1415,17 @@ class NetlOlca(object):
             'provider': [],
             'dq': [],
         }
+
+        # Initialize empty flow list
+        f_list = []
+
+        # Gets either the process or reference process of a product system.
         uuid = self.get_process_id(uuid)
         p = self.query(o.Process, uuid)
+
         if p is not None:
             for e_obj in p.exchanges:
+                # Extract metadata for data frame.
                 e_tracked = self.flow_is_tracked(e_obj.flow.id)
                 e_name = "%s" % e_obj.flow.name
                 e_amount = e_obj.amount
@@ -1414,28 +1436,40 @@ class NetlOlca(object):
                 e_prov = "%s" % e_obj.to_dict().get(
                     "defaultProvider", {}).get("@id", "")
                 e_dq = "%s" % e_obj.to_dict().get('dq_entry', '')
-                if inputs and e_obj.is_input:
-                    r_dict['name'].append(e_name)
-                    r_dict['amount'].append(e_amount)
-                    r_dict['unit'].append(e_unit)
-                    r_dict['category'].append(e_cat)
-                    r_dict['uuid'].append(e_uid)
-                    r_dict['tracked'].append(e_tracked)
-                    r_dict['description'].append(e_des)
-                    r_dict['provider'].append(e_prov)
-                    r_dict['dq'].append(e_dq)
-                if outputs and not e_obj.is_input:
-                    r_dict['name'].append(e_name)
-                    r_dict['amount'].append(e_amount)
-                    r_dict['unit'].append(e_unit)
-                    r_dict['category'].append(e_cat)
-                    r_dict['uuid'].append(e_uid)
-                    r_dict['tracked'].append(e_tracked)
-                    r_dict['description'].append(e_des)
-                    r_dict['provider'].append(e_prov)
-                    r_dict['dq'].append(e_dq)
 
-        return r_dict
+                if inputs and e_obj.is_input:
+                    if as_dict:
+                        r_dict['name'].append(e_name)
+                        r_dict['amount'].append(e_amount)
+                        r_dict['unit'].append(e_unit)
+                        r_dict['category'].append(e_cat)
+                        r_dict['uuid'].append(e_uid)
+                        r_dict['tracked'].append(e_tracked)
+                        r_dict['description'].append(e_des)
+                        r_dict['provider'].append(e_prov)
+                        r_dict['dq'].append(e_dq)
+                    else:
+                        # Add flow reference object
+                        f_list.append(e_obj.flow)
+                if outputs and not e_obj.is_input:
+                    if as_dict:
+                        r_dict['name'].append(e_name)
+                        r_dict['amount'].append(e_amount)
+                        r_dict['unit'].append(e_unit)
+                        r_dict['category'].append(e_cat)
+                        r_dict['uuid'].append(e_uid)
+                        r_dict['tracked'].append(e_tracked)
+                        r_dict['description'].append(e_des)
+                        r_dict['provider'].append(e_prov)
+                        r_dict['dq'].append(e_dq)
+                    else:
+                        f_list.append(e_obj.flow)
+
+        # The two return objects depending on user preference.
+        if as_dict:
+            return r_dict
+        else:
+            return f_list
 
     def get_from_file(self, d_class, d_uuid):
         """Return the schema object for a given UUID of a given data type
@@ -1787,15 +1821,9 @@ class NetlOlca(object):
 
         Notes
         -----
-        See also, :func:`get_flows` for an alternative return object.
+        Uses :func:`get_flows` with list return object.
         """
-        flow_list = []
-        if uuid in self.get_spec_ids(o.Process):
-            obj = self.query(o.Process, uuid)
-            for exch in obj.exchanges:
-                if exch.flow:
-                    flow_list.append(exch.flow)
-        return flow_list
+        return self.get_flows(uuid, True, True, False)
 
     def get_process_flow_properties(self, uuid):
         """
@@ -3385,14 +3413,30 @@ def writeout(fpath, dstring):
 # SANDBOX
 ###############################################################################
 if __name__ == "__main__":
+    import re
+    from netlolca.NetlOlca import NetlOlca
+
     # Initialize and connect to IPC service
     n = NetlOlca()
     n.connect()
     n.read()
 
-    # Start by searching the database for "Corn grain" processes
-    search_q = re.compile("^Corn grain,.*$")
+    # Start by searching the database for specific processes
+    search_q = re.compile("^.*scenario 1$")
     search_r = n.match_process_names(search_q)
+
+    # For UP template, just scrape the UUIDs:
+    p_uuids = [p[0] for p in search_r]
+
+    # Goal is to get input and output flows where the flow amounts are
+    # parameterized. The basic functions are ``get_input_flows`` and
+    # ``get_output_flows``, which call on ``get_flows``.
+    # The issue is that currently the numeric values are returned.
+
+
+    # \\\\\\\\\\\\\\\\\\\
+    # Derivative Database
+    # ///////////////////
 
     # For derivate data methods, create a list of example processes.
     # (i.e., "Corn grain, cultivation" and "Corn grain, harvesting")
