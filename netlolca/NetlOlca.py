@@ -1827,11 +1827,17 @@ class NetlOlca(object):
         -------
         list
             A list of parameter objects for the given process.
+
+        Notes
+        -----
+        Does not include global parameters that may show up in process
+        parameter or exchange amount formulas. For that, use
+        :func:`find_process_parameters`.
         """
         param_list = []
         if uuid in self.get_spec_ids(o.Process):
             obj = self.query(o.Process, uuid)
-            param_list.append(obj.parameters)
+            param_list = obj.parameters
         return param_list
 
     def get_process_flows(self, uuid):
@@ -3466,7 +3472,6 @@ def writeout(fpath, dstring):
 ###############################################################################
 if __name__ == "__main__":
     import re
-    import pandas as pd
     from netlolca.NetlOlca import NetlOlca
 
     # Initialize and connect to IPC service
@@ -3475,35 +3480,14 @@ if __name__ == "__main__":
     n.read()
 
     # Start by searching the database for specific processes
-    search_q = re.compile("^.*scenario 1$")
+    search_q = re.compile("^.*scenario (\\d{1,2})$")
     search_r = n.match_process_names(search_q)
 
-    # For UP template, just scrape the UUIDs:
+    # Scrub the UUIDs from search results.
     p_uuids = [p[0] for p in search_r]
 
-    # Each output has a formula except for the reference flow.
-    # One formula is an equation:
-    #   Carbon dioxide = "iff(formic_acid_case = 2;0;CO2)"
-    #
+    # Get parameters for a given process. Fast. Found 92.
+    p_params = n.get_process_parameters(p_uuids[0])
 
-    # How to speed up process parameter searches?
-    p_params = n.find_process_parameters(p_uuids[0]) # sped up.
-    p_procs = n.find_parameter_process(
-        uuid='9d9afede-d113-4300-8766-9bd1c4ee8e9c') # sped up.
-
-
-
-    # \\\\\\\\\\\\\\\\\\\
-    # Derivative Database
-    # ///////////////////
-
-    # For derivate data methods, create a list of example processes.
-    # (i.e., "Corn grain, cultivation" and "Corn grain, harvesting")
-    p_uuids = [
-        p[0] for p in search_r if p[1].endswith(
-            "cultivation") or p[1].endswith("harvesting")
-    ]
-
-    d = n.get_full_dd_root_entities_dict(p_uuids, False)
-    i = get_dict_number(d, o.Process, 'class')
-    print(len(d[i]['ids']))  # 19
+    # Get all parameters reference within a process. Slower. Found 93.
+    p_all_params = n.find_process_parameters(p_uuids[0])
