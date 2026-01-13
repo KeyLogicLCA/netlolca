@@ -664,7 +664,7 @@ class NetlOlca(object):
         self.logger.info("Disconnecting client from server")
         self.client = None
 
-    def find_parameter(self, p_name, as_dict=False):
+    def find_parameter(self, p_name, p_list=None, as_dict=False):
         """Return a list of parameter objects (or dictionaries) matching a
         given name.
 
@@ -672,6 +672,9 @@ class NetlOlca(object):
         ----------
         p_name : str
             Parameter name
+        p_list : list, optional
+            A list of Parameter (or Ref) objects to speed up search.
+            Defaults to none.
         as_dict : bool, optional
             Whether return objects should be dictionaries, by default False
 
@@ -691,9 +694,13 @@ class NetlOlca(object):
             raise ValueError("Parameter names must be a string!")
         p_name = p_name.lower()
 
+        # Get parameter list if not provided.
+        if p_list is None:
+            p_list = self.list_parameters()
+
         # Initialize return list of potential matches.
         p_matches = []
-        for p_obj in self.list_parameters():
+        for p_obj in p_list:
             par_name = p_obj.name.lower()
             if par_name == p_name:
                 if as_dict:
@@ -739,9 +746,11 @@ class NetlOlca(object):
             raise TypeError("UUID must be a string!")
 
         proc_list = []
+        all_params = self.list_parameters()
+
         for pid in self.get_spec_ids(o.Process):
-            p_obj = self.query(o.Process, pid)
-            for par_obj in p_obj.parameters:
+            param_list = self.find_process_parameters(pid, all_params)
+            for par_obj in param_list:
                 # Prioritize UUID over parameter name:
                 if uuid and par_obj.id == uuid:
                     proc_list.append(pid)
@@ -752,7 +761,7 @@ class NetlOlca(object):
             self.logger.warning("Parameter not found in a process!")
         return proc_list
 
-    def find_process_parameters(self, uuid):
+    def find_process_parameters(self, uuid, parameters=None):
         """Return parameter objects associated with a process.
 
         Includes parameters found in the parameters table and referenced
@@ -765,6 +774,9 @@ class NetlOlca(object):
         ----------
         uuid : str
             A Process universally unique identifier.
+        parameters : list, optional
+            A list of Parameter objects to speed up searches.
+            Defaults to none, which triggers querying all parameters.
 
         Returns
         -------
@@ -786,12 +798,18 @@ class NetlOlca(object):
             try:
                 self.logger.info(
                     "Received non-process UUID, trying to get process ID")
-                return self.find_process_parameters(self.get_process_id(uuid))
+                return self.find_process_parameters(
+                    self.get_process_id(uuid), parameters
+                )
             except:
                 raise ValueError("UUID must be for a process!")
 
         # Initialize the return object
         param_list = []
+
+        # Pre-compiled list of all parameters.
+        if parameters is None:
+            parameters = self.list_parameters()
 
         # Process-level
         self.logger.info("Searching process-level parameters")
@@ -804,7 +822,9 @@ class NetlOlca(object):
             if not par_obj.is_input_parameter and par_obj.formula:
                 # Search the formula for global parameters.
                 # NOTE: process-level params are already captured above.
-                f_params = self.formula_extractor(par_obj.formula, [])
+                f_params = self.formula_extractor(
+                    par_obj.formula, [], parameters
+                )
                 param_list += f_params
 
         # Exchange table referenced (global level)
@@ -814,19 +834,20 @@ class NetlOlca(object):
             if ex_obj.amount_formula:
                 # Again, only get global params, because process-level is
                 # accounted for.
-                f_params = self.formula_extractor(ex_obj.amount_formula, [])
+                f_params = self.formula_extractor(
+                    ex_obj.amount_formula, [], parameters
+                )
                 param_list += f_params
 
         if len(param_list) == 0:
             self.logger.warning("No parameters found for process!")
         else:
-            # Remove duplicates
+            # Remove duplicates. NOTE all parameters should have unique UUID.
             r_list = []
             tmp_list = []
             for param in param_list:
-                my_tuple = (param.id, param.parameter_scope.name)
-                if my_tuple not in tmp_list:
-                    tmp_list.append(my_tuple)
+                if param.id not in tmp_list:
+                    tmp_list.append(param.id)
                     r_list.append(param)
             param_list = r_list
 
@@ -885,7 +906,7 @@ class NetlOlca(object):
             self.logger.warning("Failed to find flow, '%s'" % uuid)
         return r_str
 
-    def formula_extractor(self, f_str, p_list=[]):
+    def formula_extractor(self, f_str, p_list=[], master_list=None):
         """Extract global parameters from a formula.
 
         The process includes the following steps to recursively search
@@ -904,6 +925,8 @@ class NetlOlca(object):
             exchange tables (e.g., amount formula).
         p_list : list, optional
             A list of parameters used for recursive searching, by default []
+        master_list : list, optional
+            A list of all parameters to search.
 
         Returns
         -------
@@ -918,9 +941,6 @@ class NetlOlca(object):
         are letters, numbers, and underscores that does not start or end
         with an underscore.
         """
-        # Essentially, 'GLOBAL_SCOPE' str
-        g_scope = o.ParameterScope.GLOBAL_SCOPE.name
-
         # Use regular expression to match variable names
         # (based on the notion that variables are letters,
         # numbers, and underscores that does not start or end
@@ -934,22 +954,25 @@ class NetlOlca(object):
         # entirely of numbers (i.e., coefficients or constants in equations).
         q_except = re.compile("[0-9]+")
 
-        # Search the formula for parameters & filter out exceptions.
+        # Search the formula for parameters & filter out exceptions and
+        # if-statements.
         f_params = re.findall(q, f_str.lower())
         f_params = [
             x for x in f_params if (not re.match(q_except, x)) and (
-                x != "if")
+                x != "if") and (x != "iff")
         ]
 
         for f_param in f_params:
-            s_results = self.find_parameter(f_param)
+            s_results = self.find_parameter(f_param, p_list=master_list)
             for sr in s_results:
                 # Add all referenced global parameters
-                if sr.parameter_scope.name == g_scope:
+                if sr.parameter_scope == o.ParameterScope.GLOBAL_SCOPE:
                     p_list.append(sr)
                     # Recursively search dependent global parameters:
                     if not sr.is_input_parameter and sr.formula:
-                        p_list = self.formula_extractor(sr.formula, p_list)
+                        p_list = self.formula_extractor(
+                            sr.formula, p_list, master_list
+                        )
         return p_list
 
     def get_actor_yaml(self, f_dir=None):
@@ -1394,6 +1417,8 @@ class NetlOlca(object):
         Notes
         -----
         The data quality index is a string (e.g., '(1;3;2;5;1)').
+        For exchanges that have parameterized amounts, use the 'amountFormula'
+        column (if ``as_dict`` is true).
 
         Examples
         --------
@@ -1407,6 +1432,7 @@ class NetlOlca(object):
         r_dict = {
             'name': [],
             'amount': [],
+            'amountFormula': [],
             'unit': [],
             'category': [],
             'uuid': [],
@@ -1429,6 +1455,7 @@ class NetlOlca(object):
                 e_tracked = self.flow_is_tracked(e_obj.flow.id)
                 e_name = "%s" % e_obj.flow.name
                 e_amount = e_obj.amount
+                e_form = e_obj.amount_formula
                 e_unit = "%s" % e_obj.unit.name
                 e_cat = "%s" % e_obj.flow.category
                 e_uid = "%s" % e_obj.flow.id
@@ -1441,6 +1468,7 @@ class NetlOlca(object):
                     if as_dict:
                         r_dict['name'].append(e_name)
                         r_dict['amount'].append(e_amount)
+                        r_dict['amountFormula'].append(e_form)
                         r_dict['unit'].append(e_unit)
                         r_dict['category'].append(e_cat)
                         r_dict['uuid'].append(e_uid)
@@ -1455,6 +1483,7 @@ class NetlOlca(object):
                     if as_dict:
                         r_dict['name'].append(e_name)
                         r_dict['amount'].append(e_amount)
+                        r_dict['amountFormula'].append(e_form)
                         r_dict['unit'].append(e_unit)
                         r_dict['category'].append(e_cat)
                         r_dict['uuid'].append(e_uid)
@@ -2545,16 +2574,40 @@ class NetlOlca(object):
                         inc_process=True,
                         input_only=False,
                         as_dict=False):
-        # IN PROGRESS
-        # To get a master list of global and/or process parameters filterable
-        # by input parameter status.
+        """Return a list of parameters based on scope and classification.
+
+        Parameters
+        ----------
+        inc_global : bool, optional
+            Whether to include global scope parameters, by default True
+        inc_process : bool, optional
+            Whether to include process scope parameters, by default True
+        input_only : bool, optional
+            Whether to include only input parameter types. If false, both
+            input and dependent parameters are returned.
+            Default is false.
+        as_dict : bool, optional
+            Whether to return parameters as dictionary objects; otherwise
+            returns Parameter class objects, by default False
+
+        Returns
+        -------
+        list
+            A list of parameter objects or dictionaries (if ``as_dict`` is true)
+        """
+        # Initialize empty return list
         param_list = []
 
-        # Global scope
-        if inc_global:
-            for par_id in self.get_spec_ids(o.Parameter):
-                par_obj = self.query(o.Parameter, par_id)
+        # HOTFIX: all parameters (including process and global) are found
+        # in the Parameter root entity list.
+        for par_id in self.get_spec_ids(o.Parameter):
+            par_obj = self.query(o.Parameter, par_id)
+
+            # Global scope
+            if inc_global and (
+                    par_obj.parameter_scope == o.ParameterScope.GLOBAL_SCOPE):
                 if input_only and par_obj.is_input_parameter:
+                    # Input global parameters
                     if as_dict:
                         param_list.append(par_obj.to_dict())
                     else:
@@ -2565,21 +2618,20 @@ class NetlOlca(object):
                     else:
                         param_list.append(par_obj)
 
-        # Process scope
-        if inc_process:
-            for p_id in self.get_spec_ids(o.Process):
-                p_obj = self.query(o.Process, p_id)
-                for par_obj in p_obj.parameters:
-                    if input_only and par_obj.is_input_parameter:
-                        if as_dict:
-                            param_list.append(par_obj.to_dict())
-                        else:
-                            param_list.append(par_obj)
-                    elif not input_only:
-                        if as_dict:
-                            param_list.append(par_obj.to_dict())
-                        else:
-                            param_list.append(par_obj)
+            # Process scope
+            if inc_process and (
+                    par_obj.parameter_scope == o.ParameterScope.PROCESS_SCOPE):
+                if input_only and par_obj.is_input_parameter:
+                    # Input process parameters
+                    if as_dict:
+                        param_list.append(par_obj.to_dict())
+                    else:
+                        param_list.append(par_obj)
+                elif not input_only:
+                    if as_dict:
+                        param_list.append(par_obj.to_dict())
+                    else:
+                        param_list.append(par_obj)
 
         return param_list
 
@@ -3414,6 +3466,7 @@ def writeout(fpath, dstring):
 ###############################################################################
 if __name__ == "__main__":
     import re
+    import pandas as pd
     from netlolca.NetlOlca import NetlOlca
 
     # Initialize and connect to IPC service
@@ -3428,10 +3481,16 @@ if __name__ == "__main__":
     # For UP template, just scrape the UUIDs:
     p_uuids = [p[0] for p in search_r]
 
-    # Goal is to get input and output flows where the flow amounts are
-    # parameterized. The basic functions are ``get_input_flows`` and
-    # ``get_output_flows``, which call on ``get_flows``.
-    # The issue is that currently the numeric values are returned.
+    # Each output has a formula except for the reference flow.
+    # One formula is an equation:
+    #   Carbon dioxide = "iff(formic_acid_case = 2;0;CO2)"
+    #
+
+    # How to speed up process parameter searches?
+    p_params = n.find_process_parameters(p_uuids[0]) # sped up.
+    p_procs = n.find_parameter_process(
+        uuid='9d9afede-d113-4300-8766-9bd1c4ee8e9c') # sped up.
+
 
 
     # \\\\\\\\\\\\\\\\\\\
