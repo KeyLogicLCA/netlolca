@@ -1749,17 +1749,19 @@ class NetlOlca(object):
         Returns
         -------
         list
-            A list of actor objects for the given process.
+            A list of reference objects to the actors of the given process.
         """
         a_list = []
         if uuid in self.get_spec_ids(o.Process):
             obj = self.query(o.Process, uuid)
             if obj.process_documentation.data_documentor:
                 a_list.append(obj.process_documentation.data_documentor)
-            elif obj.process_documentation.data_generator and (
+            
+            if obj.process_documentation.data_generator and (
                     obj.process_documentation.data_generator not in a_list):
                 a_list.append(obj.process_documentation.data_generator)
-            elif obj.process_documentation.data_set_owner and (
+            
+            if obj.process_documentation.data_set_owner and (
                     obj.process_documentation.data_set_owner not in a_list):
                 a_list.append(obj.process_documentation.data_set_owner)
 
@@ -1784,7 +1786,7 @@ class NetlOlca(object):
             obj = self.query(o.Process, uuid)
 
             # Process schema
-            if obj.dq_system and obj.dq_system not in dq_system:
+            if obj.dq_system:
                 dq_system.append(obj.dq_system)
 
             # Flow schema
@@ -1816,7 +1818,7 @@ class NetlOlca(object):
 
     def get_process_parameters(self, uuid):
         """
-        Return a list of parameters uuids for a given process.
+        Return a list of parameters objects for a given process.
 
         Parameters
         ----------
@@ -1852,7 +1854,7 @@ class NetlOlca(object):
         Returns
         -------
         list
-            A list of flow objects for the given process.
+            A list of reference objects to the flows of the given process.
 
         Notes
         -----
@@ -1878,31 +1880,35 @@ class NetlOlca(object):
         if uuid in self.get_spec_ids(o.Process):
             obj = self.query(o.Process, uuid)
             for exch in obj.exchanges:
-                if exch.flow_property:
+                if exch.flow_property and exch.flow_property.id not in [x.id for x in fp_list]:
                     fp_list.append(exch.flow_property)
         return fp_list
 
-    def get_default_providers(self, uuid):
+    def get_default_providers(self, uuid, all_prov=True):
         """
         Return a list of default providers for a given process.
 
         This function goes through all exchanges of a process, identifies the
         default providers, and returns a list of default provider objects.
-        Then the function goe through the exchanges of the default providers,
+        Optionally, the function can go through the exchanges of the default providers,
         identifies their default providers, and appends them to the list if
-        they are not already in the list.
-
-        This process is repeated until all default providers are found.
+        they are not already in the list. Then this process is repeated until all 
+        default providers are found.
 
         Parameters
         ----------
         uuid : str
             The UUID of the process.
-
+        all_prov : bool, optional
+            Whether to search for all default providers in the supply chain of the 
+            given process.
+            True: Get all default providers in the supply chain of the given process.
+            False: Get only the default providers in the exchange table of the given process.
+        
         Returns
         -------
         list
-            A list of default provider objects for the given process.
+            A list of process UUIDs of the default providers for the given process.
         """
         provider_list = []
         seen = set()
@@ -1931,7 +1937,7 @@ class NetlOlca(object):
                 dp = exch.default_provider.id
                 if dp not in provider_list:
                     provider_list.append(dp)
-                if dp not in seen:
+                if all_prov and dp not in seen:
                     to_be_checked.append(dp)
 
         return provider_list
