@@ -1842,26 +1842,6 @@ class NetlOlca(object):
             param_list = obj.parameters
         return param_list
 
-    def get_process_flows(self, uuid):
-        """
-        Return a list of flows for a given process.
-
-        Parameters
-        ----------
-        uuid : str
-            The UUID of the process.
-
-        Returns
-        -------
-        list
-            A list of reference objects to the flows of the given process.
-
-        Notes
-        -----
-        Uses :func:`get_flows` with list return object.
-        """
-        return self.get_flows(uuid, True, True, False)
-
     def get_process_flow_properties(self, uuid):
         """
         Return a list of flow properties for a given process.
@@ -1991,24 +1971,31 @@ class NetlOlca(object):
         Examples
         --------
         >>> uuid_list = ["123e4567-e89b-12d3-a456-426614174000"]
-        >>> dd_root_entities_dict = self.get_dd_root_entities_dict(uuid_list)
+        >>> dd_root_entities_dict = self.get_full_dd_root_entities_dict(ddb_uuids, add_objs=True)
         >>> print(dd_root_entities_dict)
 
         """
         # Get root entities dictionary of the full database.
+        print("Getting root entities dictionary of the source database.")
         full_dict = copy.deepcopy(self._spec_map)
 
         # Get full list of Process UUIDs in derivative database.
         # This includes processes that are providers to the processes in
         # `uuid_list`; remove duplicates (e.g., from similar providers).
+        all_prov = True
+        if all_prov == True:
+            print("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
+        else:
+            print("Getting Process UUIDs from the derivative database including default providers for the targeted processes only.")
         ddb_uuids = []
         for uuid in uuid_list:
             ddb_uuids.append(uuid)
-            ddb_uuids += self.get_default_providers(uuid)
-        uuid_list = list(set(ddb_uuids))
+            ddb_uuids += self.get_default_providers(uuid, all_prov)
+        ddb_uuids = list(set(ddb_uuids))
 
         # Create new field to store objs for each root entity.
         if add_objs:
+            print("Creating new field to store objects for each root entity.")
             for i in self._spec_map.keys():
                 full_dict[i]["objs"] = []
 
@@ -2030,11 +2017,17 @@ class NetlOlca(object):
             o.SocialIndicator,
         ]
         for name in entities:
+            print("Resetting 'ids' field for %s." % name)
             i = get_dict_number(self._spec_map, name, 'class')
             full_dict[i]["ids"] = []
 
+        # Get all parameters from the full database.
+        print("Getting all parameters objects from the full database.")
+        all_parameters = self.list_parameters()
+
         # Add back entities.
-        for uuid in uuid_list:
+        for uuid in ddb_uuids:
+            print("Processing root entities for process UUID: %s" % uuid)
             # Actors #1
             actors = self.get_process_actors(uuid)
             if actors:
@@ -2067,12 +2060,12 @@ class NetlOlca(object):
 
             # EPD #4 - keep all
             if add_objs:
-                i = get_dict_number(self._spec_map, o.EPD, "class")
+                i = get_dict_number(self._spec_map, o.Epd, "class")
                 for _id in full_dict[i]["ids"]:
                     full_dict[i]["objs"].append(self.query(o.EPD, _id))
 
             # Flow #5
-            flows = self.get_process_flows(uuid)
+            flows = self.get_flows(uuid, True, True, False)
             if flows:
                 i = get_dict_number(self._spec_map, o.Flow, "class")
                 for flow in flows:
@@ -2099,27 +2092,18 @@ class NetlOlca(object):
             locations = self.get_process_location(uuid)
             if locations:
                 i = get_dict_number(self._spec_map, o.Location, "class")
-                if isinstance(locations, list):
-                    for location in locations:
-                        if location.id not in full_dict[i]["ids"]:
-                            full_dict[i]["ids"].append(location.id)
-                            if add_objs:
-                                full_dict[i]["objs"].append(
-                                    self.query(o.Location, location.id)
-                                )
-                else:
-                    if locations.id not in full_dict[i]["ids"]:
-                        full_dict[i]["ids"].append(locations.id)
-                        if add_objs:
-                            full_dict[i]["objs"].append(
-                                self.query(o.Location, locations.id)
-                            )
+                if locations.id not in full_dict[i]["ids"]:
+                    full_dict[i]["ids"].append(locations.id)
+                    if add_objs:
+                        full_dict[i]["objs"].append(
+                            self.query(o.Location, locations.id)
+                        )
 
             # Parameter #10
-            parameters = self.get_process_parameters(uuid)
+            parameters = self.find_process_parameters(uuid, all_parameters)
             if parameters:
                 i = get_dict_number(self._spec_map, o.Parameter, "class")
-                for parameter in parameters[0]:
+                for parameter in parameters:
                     if parameter.id not in full_dict[i]["ids"]:
                         full_dict[i]["ids"].append(parameter.id)
                         if add_objs:
@@ -2148,20 +2132,21 @@ class NetlOlca(object):
 
         # Impact categories #7 - keep all
         if add_objs:
-            print ("resolving impact categories")
+            print("Collecting reference objects for impact categories.")
             i = get_dict_number(self._spec_map, o.ImpactCategory, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.ImpactCategory, _id))
 
         # Impact methods #8 - keep all
         if add_objs:
-            print ("resolving impact methods")
+            print("Collecting reference objects for impact methods.")
             i = get_dict_number(self._spec_map, o.ImpactMethod, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.ImpactMethod, _id))
 
         # UnitGroup #17 - keep all
         if add_objs:
+            print("Collecting reference objects for unit groups.")
             i = get_dict_number(self._spec_map, o.UnitGroup, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.UnitGroup, _id))
