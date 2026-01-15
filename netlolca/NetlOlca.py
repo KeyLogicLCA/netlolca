@@ -1976,7 +1976,7 @@ class NetlOlca(object):
 
         """
         # Get root entities dictionary of the full database.
-        print("Getting root entities dictionary of the source database.")
+        logging.info("Getting root entities dictionary of the source database.")
         full_dict = copy.deepcopy(self._spec_map)
 
         # Get full list of Process UUIDs in derivative database.
@@ -1984,9 +1984,9 @@ class NetlOlca(object):
         # `uuid_list`; remove duplicates (e.g., from similar providers).
         all_prov = True
         if all_prov == True:
-            print("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
+            logging.info("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
         else:
-            print("Getting Process UUIDs from the derivative database including default providers for the targeted processes only.")
+            logging.info("Getting Process UUIDs from the derivative database including default providers for the targeted processes only.")
         ddb_uuids = []
         for uuid in uuid_list:
             ddb_uuids.append(uuid)
@@ -1995,7 +1995,7 @@ class NetlOlca(object):
 
         # Create new field to store objs for each root entity.
         if add_objs:
-            print("Creating new field to store objects for each root entity.")
+            logging.info("Creating new field to store objects for each root entity.")
             for i in self._spec_map.keys():
                 full_dict[i]["objs"] = []
 
@@ -2017,17 +2017,17 @@ class NetlOlca(object):
             o.SocialIndicator,
         ]
         for name in entities:
-            print("Resetting 'ids' field for %s." % name)
+            logging.info("Resetting 'ids' field for %s." % name)
             i = get_dict_number(self._spec_map, name, 'class')
             full_dict[i]["ids"] = []
 
         # Get all parameters from the full database.
-        print("Getting all parameters objects from the full database.")
+        logging.info("Getting all parameters objects from the full database.")
         all_parameters = self.list_parameters()
 
         # Add back entities.
         for uuid in ddb_uuids:
-            print("Processing root entities for process UUID: %s" % uuid)
+            logging.info("Processing root entities for process UUID: %s" % uuid)
             # Actors #1
             actors = self.get_process_actors(uuid)
             if actors:
@@ -2132,21 +2132,21 @@ class NetlOlca(object):
 
         # Impact categories #7 - keep all
         if add_objs:
-            print("Collecting reference objects for impact categories.")
+            logging.info("Collecting reference objects for impact categories.")
             i = get_dict_number(self._spec_map, o.ImpactCategory, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.ImpactCategory, _id))
 
         # Impact methods #8 - keep all
         if add_objs:
-            print("Collecting reference objects for impact methods.")
+            logging.info("Collecting reference objects for impact methods.")
             i = get_dict_number(self._spec_map, o.ImpactMethod, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.ImpactMethod, _id))
 
         # UnitGroup #17 - keep all
         if add_objs:
-            print("Collecting reference objects for unit groups.")
+            logging.info("Collecting reference objects for unit groups.")
             i = get_dict_number(self._spec_map, o.UnitGroup, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.UnitGroup, _id))
