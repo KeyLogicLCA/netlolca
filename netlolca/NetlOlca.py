@@ -29,7 +29,7 @@ interacting with GreenDelta's openLCA (version 2) either directly (via the
 IPC server) or indirectly (via an exported JSON-LD zip file).
 
 Last Edited:
-    2026-01-13
+    2026-01-27
 
 Examples
 --------
@@ -1756,11 +1756,11 @@ class NetlOlca(object):
             obj = self.query(o.Process, uuid)
             if obj.process_documentation.data_documentor:
                 a_list.append(obj.process_documentation.data_documentor)
-            
+
             if obj.process_documentation.data_generator and (
                     obj.process_documentation.data_generator not in a_list):
                 a_list.append(obj.process_documentation.data_generator)
-            
+
             if obj.process_documentation.data_set_owner and (
                     obj.process_documentation.data_set_owner not in a_list):
                 a_list.append(obj.process_documentation.data_set_owner)
@@ -1872,7 +1872,7 @@ class NetlOlca(object):
         default providers, and returns a list of default provider objects.
         Optionally, the function can go through the exchanges of the default providers,
         identifies their default providers, and appends them to the list if
-        they are not already in the list. Then this process is repeated until all 
+        they are not already in the list. Then this process is repeated until all
         default providers are found.
 
         Parameters
@@ -1880,11 +1880,11 @@ class NetlOlca(object):
         uuid : str
             The UUID of the process.
         all_prov : bool, optional
-            Whether to search for all default providers in the supply chain of the 
+            Whether to search for all default providers in the supply chain of the
             given process.
             True: Get all default providers in the supply chain of the given process.
             False: Get only the default providers in the exchange table of the given process.
-        
+
         Returns
         -------
         list
@@ -1995,7 +1995,9 @@ class NetlOlca(object):
 
         # Create new field to store objs for each root entity.
         if add_objs:
-            logging.info("Creating new field to store objects for each root entity.")
+            logging.info(
+                "Creating new field to store objects for each root entity."
+            )
             for i in self._spec_map.keys():
                 full_dict[i]["objs"] = []
 
@@ -2211,6 +2213,37 @@ class NetlOlca(object):
         else:
             self.logger.warning("No connection!")
         return r_list
+
+    def get_quant_ref_flow(self, p_uuid):
+        """Helper function to return a process's quantitative reference flow.
+
+        Parameters
+        ----------
+        p_uuid : str
+            A process (or product system) universally unique identifier.
+
+        Returns
+        -------
+        olca-schema.Exchange
+            An exchange object associated as quantitative reference flow,
+            or NoneType (if method fails to find process or no flows are
+            labeled as quantitative reference).
+        """
+        # Ensure UUID is from a process.
+        _uuid = self.get_process_id(p_uuid)
+        _found = False
+        if _uuid:
+            p = self.query(o.Process, _uuid)
+            for ex in p.exchanges:
+                # A process has at most 1 quantitative reference.
+                if ex.is_quantitative_reference:
+                    return ex
+        if not _found:
+            self.logger.warning(
+                "Failed to find quantitative reference flow "
+                "for process, '%s'" % p.name
+            )
+        return None
 
     def get_reviewer(self, uuid=None):
         """Return tuple of current unit process reviewer.
