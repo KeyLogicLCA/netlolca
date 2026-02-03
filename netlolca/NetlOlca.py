@@ -1982,15 +1982,11 @@ class NetlOlca(object):
         # Get full list of Process UUIDs in derivative database.
         # This includes processes that are providers to the processes in
         # `uuid_list`; remove duplicates (e.g., from similar providers).
-        all_prov = True
-        if all_prov == True:
-            logging.info("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
-        else:
-            logging.info("Getting Process UUIDs from the derivative database including default providers for the targeted processes only.")
+        logging.info("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
         ddb_uuids = []
         for uuid in uuid_list:
             ddb_uuids.append(uuid)
-            ddb_uuids += self.get_default_providers(uuid, all_prov)
+            ddb_uuids += self.get_default_providers(uuid, True)
         ddb_uuids = list(set(ddb_uuids))
 
         # Create new field to store objs for each root entity.
