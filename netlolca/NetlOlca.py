@@ -2060,7 +2060,7 @@ class NetlOlca(object):
             if add_objs:
                 i = get_dict_number(self._spec_map, o.Epd, "class")
                 for _id in full_dict[i]["ids"]:
-                    full_dict[i]["objs"].append(self.query(o.EPD, _id))
+                    full_dict[i]["objs"].append(self.query(o.Epd, _id))
 
             # Flow #5
             flows = self.get_flows(uuid, True, True, False)
