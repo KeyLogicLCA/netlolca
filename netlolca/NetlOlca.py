@@ -2005,7 +2005,6 @@ class NetlOlca(object):
             o.DQSystem,
             o.Flow,
             o.FlowProperty,
-            o.Location,
             o.Parameter,
             o.Process,
             o.Source,
@@ -2086,17 +2085,6 @@ class NetlOlca(object):
                                 self.query(o.FlowProperty, flow_property.id)
                             )
 
-            # Location #9
-            locations = self.get_process_location(uuid)
-            if locations:
-                i = get_dict_number(self._spec_map, o.Location, "class")
-                if locations.id not in full_dict[i]["ids"]:
-                    full_dict[i]["ids"].append(locations.id)
-                    if add_objs:
-                        full_dict[i]["objs"].append(
-                            self.query(o.Location, locations.id)
-                        )
-
             # Parameter #10
             parameters = self.find_process_parameters(uuid, all_parameters)
             if parameters:
@@ -2141,6 +2129,13 @@ class NetlOlca(object):
             i = get_dict_number(self._spec_map, o.ImpactMethod, "class")
             for _id in full_dict[i]["ids"]:
                 full_dict[i]["objs"].append(self.query(o.ImpactMethod, _id))
+
+        # Location #9 - keep all
+        if add_objs:
+            logging.info("Collecting reference objects for locations.")
+            i = get_dict_number(self._spec_map, o.Location, "class")
+            for _id in full_dict[i]["ids"]:
+                full_dict[i]["objs"].append(self.query(o.Location, _id))
 
         # UnitGroup #17 - keep all
         if add_objs:
