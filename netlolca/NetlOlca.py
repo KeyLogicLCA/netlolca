@@ -1987,6 +1987,8 @@ class NetlOlca(object):
         for uuid in uuid_list:
             ddb_uuids.append(uuid)
             ddb_uuids += self.get_default_providers(uuid, True)
+        n_extra_processes = len(ddb_uuids) - len(uuid_list)
+        logging.info(f"The derivative database includes {n_extra_processes} additional processes that are default providers to the selected processes.")
         ddb_uuids = list(set(ddb_uuids))
 
         # Create new field to store objs for each root entity.
