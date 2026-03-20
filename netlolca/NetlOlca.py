@@ -1922,7 +1922,7 @@ class NetlOlca(object):
 
         return provider_list
 
-    def get_full_dd_root_entities_dict(self, uuid_list, add_objs=True):
+    def get_full_dd_root_entities_dict(self, uuid_list, add_objs=True, all_prov = True):
         """
         This method takes a list of uuids for select processes and returns a
         dictionary of root entities that are associated with these processes.
@@ -1961,6 +1961,11 @@ class NetlOlca(object):
         add_obs : bool, optional
             Whether to include entity objects in the return dictionary.
             If false, will only return UUIDs.
+        all_prov : bool, optional
+            Whether to include all default providers in the supply chain of the
+            given processes.
+            True: Get all default providers in the supply chain of the given processes.
+            False: Get only the default providers in the exchange table of the given processes.
 
         Returns
         -------
@@ -1986,7 +1991,7 @@ class NetlOlca(object):
         ddb_uuids = []
         for uuid in uuid_list:
             ddb_uuids.append(uuid)
-            ddb_uuids += self.get_default_providers(uuid, True)
+            ddb_uuids += self.get_default_providers(uuid, all_prov)
         n_extra_processes = len(ddb_uuids) - len(uuid_list)
         logging.info(f"The derivative database includes {n_extra_processes} additional processes that are default providers to the selected processes.")
         ddb_uuids = list(set(ddb_uuids))
