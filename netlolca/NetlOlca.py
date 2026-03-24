@@ -8,6 +8,7 @@
 ##############################################################################
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import shutil
@@ -3237,6 +3238,40 @@ def check_for_docker():
         return False
 
 
+def check_output_dir(out_dir):
+    """Helper method to ensure a directory exists.
+
+    If a given directory does not exist, this method attempts to create it.
+
+    Parameters
+    ----------
+    out_dir : str
+        A path to a directory.
+
+    Returns
+    -------
+    bool
+        Whether the directory exists.
+    """
+    if not os.path.isdir(out_dir):
+        try:
+            # Start with super mkdir
+            os.makedirs(out_dir)
+        except:
+            logging.warning("Failed to create folder %s!" % out_dir)
+            try:
+                # Revert to simple mkdir
+                os.mkdir(out_dir)
+            except:
+                logging.error("Could not create folder, %s" % out_dir)
+            else:
+                logging.info("Created %s" % out_dir)
+        else:
+            logging.info("Created %s" % out_dir)
+
+    return os.path.isdir(out_dir)
+
+
 def get_as_yaml(my_dict, rm_at=False):
     """Return a dictionary as a YAML string.
 
@@ -3297,6 +3332,91 @@ def get_dict_number(dobj, val, key):
             if name == val:
                 return idx
     return None
+
+
+def get_logger(stream=True, rfh=True, str_lv='INFO', rfh_lv='DEBUG'):
+    """A helper function for creating or retrieving a root logger with
+    only one instance of stream and/or rotating file handler.
+
+    Parameters
+    ----------
+    stream : bool, optional
+        Whether to create a stream handler, by default True
+    rfh : bool, optional
+        Whether to create a rotating file handler, by default True
+    str_lv : str, optional
+        Stream handler logging level, by default 'INFO'
+    rfh_lv : str, optional
+        Rotating file handler logging level, by default 'DEBUG'
+
+    Returns
+    -------
+    logging.Logger
+        The root logger.
+
+    Notes
+    -----
+    This could be expanded to allow the user to set the logging
+    level of a specific handler (or just overwrite all levels).
+    """
+    # Create/retrieve the root logger
+    log = logging.getLogger()
+    log.setLevel("DEBUG")
+
+    # Congrats, you now have a hidden folder in your user's home directory.
+    output_dir = os.path.join(
+        os.path.expanduser("~"),
+        ".netlolca"
+    )
+
+    # Define log format
+    rec_format = (
+        "%(asctime)s.%(msecs)03d:%(levelname)s:%(module)s:%(funcName)s:"
+        "%(message)s")
+    formatter = logging.Formatter(rec_format, datefmt='%Y-%m-%d %H:%M:%S')
+
+    # Check what handlers the root logger already has
+    has_stream = False
+    has_rfh = False
+    for h in log.handlers:
+        if h.name == 'nolca_stream':
+            has_stream = True
+            h.setLevel(str_lv)      # handle level change requests
+        elif h.name == 'nolca_rfh':
+            has_rfh = True
+            h.setLevel(rfh_lv)
+
+    # Create stream handler for info messages
+    if stream and not has_stream:
+        s_handler = logging.StreamHandler()
+        s_handler.setLevel(str_lv)
+        s_handler.setFormatter(formatter)
+        s_handler.set_name('nolca_stream')
+        s_handler.stream = sys.stdout   # won't show pink in Jupyter notebook
+        log.addHandler(s_handler)
+
+    # Create file handler for debug messages
+    if rfh and not has_rfh:
+        log_filename = "nolca.log"
+        check_output_dir(output_dir)
+        log_path = os.path.join(output_dir, log_filename)
+        f_handler = RotatingFileHandler(
+            log_path, backupCount=9, encoding='utf-8')
+        f_handler.setLevel(rfh_lv)
+        f_handler.setFormatter(formatter)
+        f_handler.set_name('nolca_rfh')
+        log.addHandler(f_handler)
+        if os.path.isfile(log_path):
+            rollover_logger(log)
+
+    # Clean-up step; all unnamed log handlers get elevated to critical.
+    #  NOTE: alternatively, we could drop all unnamed loggers.
+    num_handlers = len(log.handlers)
+    for i in range(num_handlers):
+        if not log.handlers[i].name:
+            log.handlers[i].setLevel("CRITICAL")
+
+    return log
 
 
 def make_actor_yaml(yaml_name, yaml_dir="data"):
@@ -3458,6 +3578,24 @@ def read_yaml(fpath):
             except yaml.YAMLError:
                 logging.error("Failed to read YAML from %s" % fpath)
     return c_dict
+
+
+def rollover_logger(logger):
+    """Helper method to rollover a named Rotating File Handler.
+
+    Parameters
+    ----------
+    logger : logging.Logger
+        A logger (e.g., root logger)
+    """
+    try:
+        idx = [x.name for x in logger.handlers].index("nolca_rfh")
+    except ValueError:
+        idx = -1
+
+    # Rollover the rotating file handler (if found)
+    if idx != -1:
+        logger.handlers[idx].doRollover()
 
 
 def writeout(fpath, dstring):
