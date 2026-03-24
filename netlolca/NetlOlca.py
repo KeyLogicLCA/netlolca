@@ -29,7 +29,7 @@ interacting with GreenDelta's openLCA (version 2) either directly (via the
 IPC server) or indirectly (via an exported JSON-LD zip file).
 
 Last Edited:
-    2026-01-27
+    2026-03-24
 
 Examples
 --------
@@ -2628,9 +2628,8 @@ class NetlOlca(object):
 
         # HOTFIX: all parameters (including process and global) are found
         # in the Parameter root entity list.
-        for par_id in self.get_spec_ids(o.Parameter):
-            par_obj = self.query(o.Parameter, par_id)
-
+        # HOTFIX: use :func:`get_all` to speed up search [26.03.24; TWD]
+        for par_obj in self.get_all(o.Parameter):
             # Global scope
             if inc_global and (
                     par_obj.parameter_scope == o.ParameterScope.GLOBAL_SCOPE):
