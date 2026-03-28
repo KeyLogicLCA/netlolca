@@ -1865,7 +1865,7 @@ class NetlOlca(object):
                     fp_list.append(exch.flow_property)
         return fp_list
 
-    def get_default_providers(self, uuid, all_prov=True):
+    def get_default_providers(self, uuid_list, all_prov=True):
         """
         Return a list of default providers for a given process.
 
@@ -1878,8 +1878,8 @@ class NetlOlca(object):
 
         Parameters
         ----------
-        uuid : str
-            The UUID of the process.
+        uuid_list : list of strings
+            A list of UUIDs of the processes.
         all_prov : bool, optional
             Whether to search for all default providers in the supply chain of the
             given process.
@@ -1893,7 +1893,7 @@ class NetlOlca(object):
         """
         provider_list = []
         seen = set()
-        to_be_checked = [uuid,]
+        to_be_checked = uuid_list
         spec_ids = set(self.get_spec_ids(o.Process))
 
         while to_be_checked:
@@ -1984,18 +1984,15 @@ class NetlOlca(object):
         # Get root entities dictionary of the full database.
         logging.info("Getting root entities dictionary of the source database.")
         full_dict = copy.deepcopy(self._spec_map)
-
+        all_uuids = self.get_spec_ids(o.Process)
         # Get full list of Process UUIDs in derivative database.
         # This includes processes that are providers to the processes in
         # `uuid_list`; remove duplicates (e.g., from similar providers).
         logging.info("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
-        ddb_uuids = []
-        for uuid in uuid_list:
-            ddb_uuids.append(uuid)
-            ddb_uuids += self.get_default_providers(uuid, all_prov)
+        ddb_uuids = self.get_default_providers(uuid_list, all_prov)
+        ddb_uuids = list(set(ddb_uuids))
         n_extra_processes = len(ddb_uuids) - len(uuid_list)
         logging.info(f"The derivative database includes {n_extra_processes} additional processes that are default providers to the selected processes.")
-        ddb_uuids = list(set(ddb_uuids))
 
         # Create new field to store objs for each root entity.
         if add_objs:
@@ -2032,6 +2029,9 @@ class NetlOlca(object):
 
         # Add back entities.
         for uuid in ddb_uuids:
+            if uuid not in all_uuids:
+                logging.info("Process UUID %s is not in the full database. Skipping." % uuid)
+                continue
             logging.info("Processing root entities for process UUID: %s" % uuid)
             # Actors #1
             actors = self.get_process_actors(uuid)
