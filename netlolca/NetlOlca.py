@@ -1989,10 +1989,11 @@ class NetlOlca(object):
         # This includes processes that are providers to the processes in
         # `uuid_list`; remove duplicates (e.g., from similar providers).
         logging.info("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
-        ddb_uuids=uuid_list
-        ddb_uuids.extend(self.get_default_providers(uuid_list, all_prov))
+        uuid_list_copy = copy.deepcopy(uuid_list)
+        ddb_uuids = (self.get_default_providers(uuid_list, all_prov))
+        ddb_uuids.extend(uuid_list_copy)
         ddb_uuids = list(set(ddb_uuids))
-        n_extra_processes = len(ddb_uuids) - len(uuid_list)
+        n_extra_processes = len(ddb_uuids) - len(uuid_list_copy)
         logging.info(f"The derivative database includes {n_extra_processes} additional processes that are default providers to the selected processes or are included in the selected processes.")
 
         # Create new field to store objs for each root entity.
@@ -2035,7 +2036,11 @@ class NetlOlca(object):
                 continue
             logging.info("Processing root entities for process UUID: %s" % uuid)
             # Actors #1
-            actors = self.get_process_actors(uuid)
+            try:
+                actors = self.get_process_actors(uuid)
+            except Exception as e:
+                logging.error(f"Error getting actors for process {uuid}: {e}")
+                continue
             if actors:
                 i = get_dict_number(self._spec_map, o.Actor, "class")
                 for actor in actors:
@@ -2053,7 +2058,11 @@ class NetlOlca(object):
                     full_dict[i]["objs"].append(self.query(o.Currency, _id))
 
             # DQ system #3
-            dq_systems = self.get_process_dq_system(uuid)
+            try:
+                dq_systems = self.get_process_dq_system(uuid)
+            except Exception as e:
+                logging.error(f"Error getting DQ systems for process {uuid}: {e}")
+                continue
             if dq_systems:
                 i = get_dict_number(self._spec_map, o.DQSystem, "class")
                 for dq_system in dq_systems:
@@ -2071,7 +2080,11 @@ class NetlOlca(object):
                     full_dict[i]["objs"].append(self.query(o.Epd, _id))
 
             # Flow #5
-            flows = self.get_flows(uuid, True, True, False)
+            try:
+                flows = self.get_flows(uuid, True, True, False)
+            except Exception as e:
+                logging.error(f"Error getting flows for process {uuid}: {e}")
+                continue
             if flows:
                 i = get_dict_number(self._spec_map, o.Flow, "class")
                 for flow in flows:
@@ -2083,7 +2096,11 @@ class NetlOlca(object):
                             )
 
             # Flow property #6
-            flow_properties = self.get_process_flow_properties(uuid)
+            try:
+                flow_properties = self.get_process_flow_properties(uuid)
+            except Exception as e:
+                logging.error(f"Error getting flow properties for process {uuid}: {e}")
+                continue
             if flow_properties:
                 i = get_dict_number(self._spec_map, o.FlowProperty, "class")
                 for flow_property in flow_properties:
@@ -2095,7 +2112,11 @@ class NetlOlca(object):
                             )
 
             # Parameter #10
-            parameters = self.find_process_parameters(uuid, all_parameters)
+            try:
+                parameters = self.find_process_parameters(uuid, all_parameters)
+            except Exception as e:
+                logging.error(f"Error getting parameters for process {uuid}: {e}")
+                continue
             if parameters:
                 i = get_dict_number(self._spec_map, o.Parameter, "class")
                 for parameter in parameters:
@@ -2114,7 +2135,11 @@ class NetlOlca(object):
                     full_dict[i]["objs"].append(self.query(o.Process, uuid))
 
             # Source #16
-            sources = self.get_process_sources(uuid)
+            try:
+                sources = self.get_process_sources(uuid)
+            except Exception as e:
+                logging.error(f"Error getting sources for process {uuid}: {e}")
+                continue
             if sources:
                 i = get_dict_number(self._spec_map, o.Source, "class")
                 for source in sources:
