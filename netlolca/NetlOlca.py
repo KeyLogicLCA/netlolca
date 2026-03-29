@@ -1990,6 +1990,7 @@ class NetlOlca(object):
         # `uuid_list`; remove duplicates (e.g., from similar providers).
         logging.info("Getting Process UUIDs from the derivative database including default providers across the entire supply chain.")
         ddb_uuids = self.get_default_providers(uuid_list, all_prov)
+        ddb_uuids.extend(uuid_list)
         ddb_uuids = list(set(ddb_uuids))
         n_extra_processes = len(ddb_uuids) - len(uuid_list)
         logging.info(f"The derivative database includes {n_extra_processes} additional processes that are default providers to the selected processes.")
