@@ -30,7 +30,7 @@ interacting with GreenDelta's openLCA (version 2) either directly (via the
 IPC server) or indirectly (via an exported JSON-LD zip file).
 
 Last Edited:
-    2026-03-24
+    2026-03-30
 
 Examples
 --------
@@ -88,12 +88,16 @@ Test reading unique unit groups from another example JSON-LD.
 __all__ = [
     "FUEL_CATS",
     "NetlOlca",
+    "check_for_docker",
+    "check_output_dir",
     "get_as_yaml",
     "get_dict_number",
+    "get_logger",
     "make_actor_yaml",
     "pretty_print_dict",
     "print_progress",
     "read_yaml",
+    "rollover_logger",
     "writeout",
 ]
 
