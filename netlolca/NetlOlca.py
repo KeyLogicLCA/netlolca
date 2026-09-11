@@ -14,12 +14,16 @@ import re
 import shutil
 import sys
 import copy
+import uuid
+import datetime
+import pandas as pd
 
 import yaml
 import olca_ipc as ipc
 import olca_ipc.rest as rest
 import olca_schema as o
 import olca_schema.zipio as zio
+import olca_schema.units as o_units
 
 
 ##############################################################################
@@ -662,6 +666,243 @@ class NetlOlca(object):
             self.client = ipc.Client(port)
             if self.client:
                 self.logger.info("Connected on %s" % self.client.url)
+
+
+    def create_elementary_flow_exchange(self,
+                            ex_id,
+                            flow_uuid,
+                            unit,
+                            amount,
+                            is_input,
+                            is_quantitative_reference):
+        """This method creates an elementary flow exchange object for a given flow in openLCA.
+
+        Parameters
+        ----------
+        ex_id : int
+            Internal ID for the exchange.
+        flow_uuid : str
+            Flow universally unique identifier.
+        unit : olca.Unit, str
+            A Unit class instance or unit name.
+            Falls bac to the flow's reference unit.
+        amount : int, float
+            Numeric flow amount. 
+        is_input : bool
+            Whether the flow is an input or output.
+        is_quantitative_reference : bool
+            Whether the flow is a quantitative reference flow.
+
+        Returns
+        -------
+        olca.Exchange
+            Exchange object.
+
+        Raises
+        ------
+        ValueError
+            Failed to find flow or flow property in openLCA database or the flow
+            type is not an elementary flow type.
+
+        Note
+        ----
+        1.  This function cannot create flows with formulas. The amount has to be
+            hardcoded.
+        """
+        # Get flow and make additional checks
+        # - it exists and it is an elementary flow
+        flow = self.query(o.Flow, flow_uuid)
+        if flow is None:
+            raise ValueError(f"Flow not found: {flow_uuid}")
+        if flow.flow_type != o.FlowType.ELEMENTARY_FLOW:
+            raise ValueError("Provided flow is not an ELEMENTARY_FLOW")
+
+        # Get reference flow property.
+        flow_property = o_units.property_ref(unit)
+        if flow_property is None:
+            flow_property = o_units.property_ref(unit.lower())
+        if flow_property is None:
+            raise ValueError(
+                "The flow property is not found in the flow. "
+                "Adjust your unit or select another flow"
+            )
+
+        # Set unit.
+        # Create exchange
+        exchange = self.make_exchange()
+        exchange.flow = flow
+
+        # Set the FlowProperty reference on the exchange
+        exchange.flow_property = flow_property
+        exchange.unit = o_units.unit_ref(unit)
+        if exchange.unit is None:
+            exchange.unit = o_units.unit_ref(unit.lower())
+        exchange.amount = float(amount)
+        exchange.is_input = is_input
+        exchange.is_quantitative_reference = is_quantitative_reference
+        exchange.internal_id = ex_id
+
+        return exchange
+
+
+    def create_new_system_process(self,
+                                flows_df,
+                                process_name,
+                                process_description,
+                                quant_ref_flow,
+                                process_category):
+        """
+        This function creates a new system process in openLCA (e.g., a 
+        unit process of type 'LCI_RESULT')
+
+        Parameters
+        ----------
+        flows_df : pd.DataFrame
+        process_name : str
+        process_description : str
+        quant_ref_flow : olca-schema.Exchange
+            An exchange object associated as quantitative reference flow,
+            or NoneType (if method fails to find process or no flows are
+            labeled as quantitative reference).
+        process_category : str
+
+        Returns
+        -------
+        olca-schema.Ref
+            A reference object to the newly created process.
+        """
+        # Create empty process
+        new_p = create_empty_process(
+            process_name,
+            process_description,
+            'LCI_RESULT',
+            process_category
+        )
+
+        # Create exchanges
+        exchanges = []
+
+        # Overwrite internal ID to 1
+        quant_ref_flow.internal_id = 1
+        exchanges.append(quant_ref_flow)
+
+        # loop through the dataframe and create exchanges for elementary flows
+        ex_id = 2
+
+        # loop through the dataframe and create exchanges for elementary flows
+        for _, row in flows_df.iterrows():
+            name = row['flow_name']
+            unit = row['unit']
+            amount = row['amount']
+            is_input = row['is_input']
+            flow_uuid = row['flow_uuid']
+            flow_type = row['flow_type']
+
+            if unit is None:
+                self.logger.warning(
+                    f"{name} | {flow_uuid} has no unit and will be skipped..."
+                )
+                self.logger.warning(
+                    f"{process_name},{process_category},{flow_type},{name},"
+                    f"{amount},{is_input},{flow_uuid}\n"
+                )
+                continue
+
+            flow_property = o_units.property_ref(unit)
+            if flow_property is None:
+                self.logger.warning(
+                    f"{name} | {flow_uuid} has no flow property "
+                    "and will be skipped..."
+                )
+                self.logger.warning(
+                    f"{process_name},{process_category},{flow_type},{name},"
+                    f"{amount},{is_input},{flow_uuid}\n"
+                )
+                continue
+            try:
+                exchange = self.create_elementary_flow_exchange(
+                    ex_id,
+                    flow_uuid,
+                    unit,
+                    amount,
+                    is_input,
+                    is_quantitative_reference=False
+                )
+                exchanges.append(exchange)
+                ex_id += 1
+            except Exception as e:
+                raise ValueError(f"Error creating exchange: {e}")
+
+        # add exchanges to process
+        new_p.exchanges = exchanges
+        new_p.category = process_category
+        # new process uuid
+        new_process_uuid = new_p.id
+
+        # save process to openLCA
+        if self.add(new_p):
+            # Update the NetlOlca class's log of Process UUIDs
+            self._add_to_spec_ids(o.Process, [new_process_uuid,])
+
+        return new_process_uuid
+
+
+    def create_ps(self, process_uuid, prov_linking = "only_defaults"):
+        """This method creates a product system for a given process in openLCA.
+
+        Parameters
+        ----------
+        process_uuid : str
+            The universally unique identifier to a process, which will become
+            the reference process to the created product system.
+        prov_linking: olca.ProviderLinking 
+            The provider linking configuration for the product system.
+            Options: ignore_defaults, prefer_defaults, only_defaults
+            Default: only_defaults
+
+        Returns
+        -------
+        olca-schema.Ref
+            A reference object to the newly created product system.
+
+        Notes:
+        ------
+        The providers linking configuration is hard coded in the function to only
+        use default providers
+        """
+        # create product system with name of process
+        process_ref = self.query(o.Process, process_uuid).to_ref()
+
+        # setup provider linking
+        prov_linking_map = {
+            "ignore_defaults": o.ProviderLinking.IGNORE_DEFAULTS,
+            "prefer_defaults": o.ProviderLinking.PREFER_DEFAULTS,
+            "only_defaults": o.ProviderLinking.ONLY_DEFAULTS
+        }
+
+        if prov_linking is None or prov_linking not in prov_linking_map:
+            prov_linking = "only_defaults"
+            self.logger.info("Using default provider linking configuration.")
+
+        linking_config = o.LinkingConfig(
+            cutoff=None,
+            prefer_unit_processes=True,
+            provider_linking=prov_linking_map[prov_linking]
+        )
+        product_system_ref = self.client.create_product_system(
+            process_ref,
+            linking_config
+        )
+
+        return product_system_ref
+
+
+    def delete_product_system(self, ps_uuid):
+        """Delete a product system from the database, by UUID"""
+        psref = self.query(o.ProductSystem, ps_uuid).to_ref()
+        self.client.delete(psref)
+        return True
+
 
     def disconnect(self):
         """Close the client connection with IPC.
@@ -2903,6 +3144,296 @@ class NetlOlca(object):
         else:
             self.logger.warning("No connection opened!")
 
+
+    def roll_up_process(self,
+                        process_uuid,
+                        date,
+                        prov_linking = "only_defaults",
+                        impact_method_uuid = None,
+                        new_name = None):
+        """
+        This function creates a new LCI_RESULT process (e.g., system process) in openLCA 
+        by rolling up the flows of an existing unit process.
+
+        Parameters
+        ----------
+        process_uuid : str
+            The UUID of the process to be rolled up.
+        date : str
+            The date to append to the new name of the rolled up process.
+        prov_linking : str (optional)
+            The provenance linking option to use for the analysis.
+            Options: ignore_defaults, prefer_defaults, only_defaults
+        impact_method_uuid : str (optional)
+            The UUID of the impact method to use for the analysis.
+            None: the default impact method will be used
+            (default: None)
+        new_name : str (optional)
+            The new name for the rolled up process.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the UUID of the rolled up process and the impact
+            values for the process.
+
+            - str: The UUID of the rolled up process.
+            - pd.DataFrame: The impact values for the process.
+        """
+        # get process object
+        p = self.query(o.Process, process_uuid)
+        # check if process already 'LCI_RESULT' type, skip rollup
+        original_process_type = p.process_type
+        if original_process_type == o.ProcessType.LCI_RESULT:
+            self.logger.warning(
+                f"Process {process_uuid} is already of type 'LCI_RESULT'. "
+                "Skipping roll-up."
+            )
+            # update process name
+            original_process_name = p.name
+            if new_name is None:
+                new_name = original_process_name
+            if date is not None:
+                new_name += f" - {date}" 
+            p.name = new_name
+            # update process uuid
+            process_category = p.category
+            new_uuid = _uid(original_process_type,
+                            process_category,
+                            new_name
+            )
+            p.id = new_uuid
+            self.client.put(p)
+
+        else:
+            # run analysis for the process
+            self.logger.info(
+                "Roll-up -- "
+                "Evaluating original process to extract LCI"
+            )
+            all_flows_df, original_impact_values = self.run_analysis_for_process(
+                process_uuid,
+                prov_linking,
+                impact_method_uuid
+            )
+
+            # Get the process name and description; update name for roll up process.
+            process_description = p.description
+            original_process_name = p.name
+            if new_name is None:
+                new_name = original_process_name
+            if date is not None:
+                new_name += f" - {date}" 
+            process_category = p.category
+
+            # create new process using all flows df
+            self.logger.info("Roll-up -- Generating new roll-up process")
+            quant_ref_flow = self.get_quantitative_reference_flow(process_uuid)
+            new_uuid = self.create_new_system_process(
+                all_flows_df,
+                new_name,
+                process_description,
+                quant_ref_flow,
+                'LCI_RESULT',
+                process_category
+            )
+
+        # compare the impact values of the original and rolled up processes
+        # the validation will only happen if the user provides an impact method uuid
+        if original_process_type is not o.ProcessType.LCI_RESULT and impact_method_uuid is not None:
+            # run analysis for the rolled up process
+            self.logger.info(
+                "Roll-up -- Evaluating rolled up process to extract impact values"
+            )
+            
+            _, rollup_impact_values = self.run_analysis_for_process(
+                new_uuid,
+                prov_linking,
+                impact_method_uuid
+            )
+
+            self.logger.info(
+                "Roll-up -- "
+                "Comparing impact values of original and rolled up processes"
+            )
+            for _, row in original_impact_values.iterrows():
+                idx = rollup_impact_values.index[
+                    rollup_impact_values['impact_category'] == row['impact_category']
+                ][0]
+                warning=0
+                self.logger.info(
+                    f"Impact Category: {row['impact_category']}, "
+                    f"Original Process Impact: {row['amount']}, "
+                    "Rolled Up Process Impact: "
+                    f"{rollup_impact_values.loc[idx, 'amount']}"
+                )
+                a = row['amount']
+                b = rollup_impact_values.loc[idx, 'amount']
+                if a != 0 and b != 0:
+                    p_diff = abs(a - b) * 100 / (a) #calculate percent difference
+                    if p_diff > 0.01:
+                        self.logger.warning (
+                            f"Impact value mismatch for {row['impact_category']} \n"
+                            f"Process name: {original_process_name} \n"
+                            f"Original: {row['amount']} \n"
+                            f"Rolled up: {rollup_impact_values.loc[idx, 'amount']}"
+                            )
+                        warning+=1
+            if warning ==0:
+                self.logger.info(
+                    "Roll-up -- Roll-up process created successfully"
+                    " | No mismatch found in impact values"
+                )
+        else:
+            original_impact_values = None
+            rollup_impact_values = None
+        self.logger.info(
+            f"Roll-up -- Original process UUID: {process_uuid}"
+            f" | Roll-up UUID: {new_uuid}"
+        )
+
+        return new_uuid, original_impact_values, rollup_impact_values
+
+
+    def run_analysis_for_process(self,
+                                process_uuid,
+                                prov_linking = "only_defaults",
+                                impact_method_uuid = None):
+        """This method runs an analysis in openLCA for a process.
+        The analysis is run by creating a product system for the process, 
+        and running the analysis for the product system. 
+
+        Parameters
+        ----------
+        client : NetlOlca
+            An instance of NetlOlca class.
+        process_uuid : str
+            The UUID of the process to analyze.
+        impact_method_uuid : str, optional
+            The UUID of the impact method to use for the analysis.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the dataframe and the sum of LCI amounts for the
+            process.
+
+            - pd.DataFrame: A dataframe containing the flows
+            - pd.DataFrame: The impact values for the process.
+
+        Notes
+        ------
+        The user can provide a custom impact method UUID to use for the analysis.
+        If an impact assessment method is not specified, the function will return
+        the aggregated inventory, also referred to as LCI result.
+
+        The providers linking configuration is hard coded in the function to only
+        use default providers.
+        """
+        # create product system
+        try:
+            product_system = self.create_ps(
+                process_uuid,
+                prov_linking
+            )
+        except Exception as e:
+            raise ValueError(f"Error creating product system: {e}")
+
+        # calculate product system and extract result
+        try:
+            result = self.run_analysis_for_product_system(product_system.id, impact_method_uuid)
+        except Exception as e:
+            raise ValueError(f"Error compiling results: {e}")
+
+        # make sure the result is generated
+        result.wait_until_ready()
+        # TODO: use the ReturnState to check and print errors, if any exist
+
+        # Get all flows
+        all_flows = result.get_total_flows()
+        all_flows_df = pd.DataFrame(all_flows)
+        all_flows_df = all_flows_df.apply(_extract_flow_info, axis=1)
+
+        if impact_method_uuid is not None:
+            try:
+                impact_assessment_results = pd.DataFrame(result.get_total_impacts())
+                impact_values = impact_assessment_results
+                for idx, row in impact_values.iterrows():
+                    impact_values.loc[
+                        idx, 'impact_category'] = row['impact_category']['name']
+            except Exception as e:
+                raise ValueError(f"Error getting impact assessment results: {e}")
+        else:
+            impact_values = None
+
+        result.dispose()
+
+        return all_flows_df, impact_values
+
+
+    def run_analysis_for_product_system(self, ps_uuid, impact_method_uuid = None):
+        """
+        This method runs a life cycle impact assessment (LCIA) analysis for 
+        a given product system using a specified impact method.
+
+        Parameters
+        ----------
+        ps_uuid : str
+            The UUID of the product system.
+        impact_method_uuid : str (optional)
+            The UUID of the impact method.
+
+        Returns
+        -------
+        lcia_result : olca_schema.LciaResult
+            The LCA result.
+
+        Notes
+        -----
+        (1) If an impact method is not defined, this function will return the aggregated 
+            inventory, also referred to as LCI result.
+        (2) The calculation setup in this function uses default allocation method, the 
+            quantitative reference flow amount and unit, and does not account for 
+            parameter sets or regionalization.
+        (3) This function returns the result and deletes the product system from the 
+            database after the calculation is complete.
+        """
+
+        if not isinstance(impact_method_uuid, str):
+            impact_method_ref = None
+        else:
+            impact_method_ref = self.query(
+                o.ImpactMethod,
+                impact_method_uuid
+            )
+
+        ps_ref = self.query(o.ProductSystem, ps_uuid)
+        # get the quantitative reference flow
+        qre = self.get_quant_ref_flow(ps_ref.ref_process.id)
+
+        # build the calculation setup
+        # https://greendelta.github.io/olca-schema/classes/CalculationSetup.html
+        setup = o.CalculationSetup()
+        setup.allocation = o.AllocationType.USE_DEFAULT_ALLOCATION
+        setup.amount = qre.amount
+        setup.flow_property = qre.flow_property
+        setup.impact_method = impact_method_ref
+        setup.nw_set = None
+        setup.parameters = None #parameters/parameter sets not considered in this fct
+        setup.target = ps_ref.to_ref()
+        setup.unit = qre.unit
+        setup.with_costs = False 
+        setup.with_regionalization = False # regionalization is unaccounted for 
+
+        # Run and Generate Result
+        result = self.client.calculate(setup)
+
+        # delete the product system
+        self.delete_product_system(self, ps_uuid)
+
+        return result
+
+
     def write(self, o_obj, f_path):
         """Write an olca-schema class object to JSON-LD zip file.
 
@@ -2925,6 +3456,39 @@ class NetlOlca(object):
 ##############################################################################
 # FUNCTIONS
 ##############################################################################
+def _extract_flow_info(row):
+    """Helper function to extract flow information from the result object.
+
+    The result object has two class attributes, 'amount' and 'envi_flow'.
+    This method extracts relevant data from the 'envi_flow' (i.e., flow name,
+    unit, is input, flow UUID, and flow type) along with flow amount.
+
+    Parameters
+    ----------
+    row : dict
+        A row from the result object.
+
+    Returns
+    -------
+    pd.Series
+        A series containing the flow information.
+
+    Notes
+    -----
+    This function is generated by ChatGPT.
+    """
+    f = row["envi_flow"]["flow"]   # nested flow info
+    return pd.Series({
+        "flow_name": f["name"],
+        "unit": f["ref_unit"],
+        "amount": row["amount"],
+        "is_input": row["envi_flow"]["is_input"],
+        "flow_uuid": f["id"],
+        "flow_type": f["flow_type"].value if hasattr(
+            f["flow_type"], "value") else f["flow_type"]
+    })
+
+
 def _overwrite(json_file, olca_obj, verbose=True):
     """Overwrite an olca-schema object in an existing JSON-LD file.
 
@@ -3247,6 +3811,39 @@ def _root_entity_dict():
     }
 
 
+def _uid(*args):
+    """Generate UUID from the MD5 hash of a namespace identifier and a name.
+
+    This method uses OID namespace, which assumes that the name is an ISO OID.
+    Essentially, two strings are hashed together to create a UUID and, if the
+    same namespace and path are given again, the same UUID would be returned.
+
+    Warning
+    -------
+    The UUIDs generated by this method are version 3, which is different
+    from standard processes defined elsewhere (e.g., DQSystems and Units).
+
+    Parameters
+    ----------
+    args : tuple
+        A tuple of key words representing a path (order matters).
+        The path is a string with each argument separated by a forward slash.
+        For flows, the path is 'modeltype.flow', flow name, compartment, and
+        unit.
+        For processes, the path is 'modeltype.process', process category,
+        location, and name.
+
+    Returns
+    -------
+    str
+        A version 3 universally unique identifier (UUID)
+    """
+    path = '/'.join([str(arg).strip() for arg in args]).lower()
+    logging.debug(path)
+
+    return str(uuid.uuid3(uuid.NAMESPACE_OID, path))
+
+
 def check_for_docker():
     """Based on the quay.io Jupyter Docker images, the default user is
     jovyan, so check the environment variable against this "unique"
@@ -3266,6 +3863,55 @@ def check_for_docker():
         return True
     else:
         return False
+
+
+def create_empty_process(process_name,
+                         process_description,
+                         process_type,
+                         category):
+    """Helper function to create an empty process.
+
+    Parameters
+    ----------
+    process_name : str
+        The name of the process.
+    process_description : str
+        The description of the process.
+    process_type : str
+        The type of the process.
+        Options: 'UNIT_PROCESS', 'LCI_RESULT'
+    category : str
+        The category of the process.
+
+    Returns
+    -------
+    olca.Process
+        A process object.
+    """
+    if process_type == 'UNIT_PROCESS':
+        process_type = o.ProcessType.UNIT_PROCESS
+    elif process_type == 'LCI_RESULT':
+        process_type = o.ProcessType.LCI_RESULT
+    else:
+        process_type = o.ProcessType.UNIT_PROCESS
+
+    process_id = _uid(
+        process_type,
+        category,
+        process_name
+    )
+
+    process = o.Process(
+        id=process_id,
+        name=process_name,
+        description=process_description,
+        process_type=process_type,
+        version="1.0.0",
+        last_change=datetime.datetime.now().isoformat(),
+        category=category
+    )
+
+    return process
 
 
 def check_output_dir(out_dir):
