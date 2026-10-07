@@ -3228,7 +3228,7 @@ class NetlOlca(object):
 
             # create new process using all flows df
             self.logger.info("Roll-up -- Generating new roll-up process")
-            quant_ref_flow = self.get_quantitative_reference_flow(process_uuid)
+            quant_ref_flow = self.get_quant_ref_flow(process_uuid)
             new_uuid = self.create_new_system_process(
                 all_flows_df,
                 new_name,
