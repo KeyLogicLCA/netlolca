@@ -667,7 +667,6 @@ class NetlOlca(object):
             if self.client:
                 self.logger.info("Connected on %s" % self.client.url)
 
-
     def create_elementary_flow_exchange(self,
                             ex_id,
                             flow_uuid,
@@ -743,7 +742,6 @@ class NetlOlca(object):
         exchange.internal_id = ex_id
 
         return exchange
-
 
     def create_new_system_process(self,
                                 flows_df,
@@ -851,7 +849,6 @@ class NetlOlca(object):
 
         return new_process_uuid
 
-
     def create_ps(self, process_uuid, prov_linking = "only_defaults"):
         """This method creates a product system for a given process in openLCA.
 
@@ -901,13 +898,23 @@ class NetlOlca(object):
 
         return product_system_ref
 
-
     def delete_product_system(self, ps_uuid):
-        """Delete a product system from the database, by UUID"""
+        """Delete a product system from the database, by UUID
+        
+        Parameters
+        ----------
+        ps_uuid: str
+            Product System universally unique identifier
+
+        Returns
+        -------
+        bool
+            True if product system successfully deleted, False otherwise
+        
+        """
         psref = self.query(o.ProductSystem, ps_uuid).to_ref()
         self.client.delete(psref)
         return True
-
 
     def disconnect(self):
         """Close the client connection with IPC.
@@ -1367,8 +1374,7 @@ class NetlOlca(object):
         return r_list
 
     def get_allocation_info(self, uuid=None):
-        """
-        Extract allocation-related information from a Process object.
+        """Extract allocation-related information from a Process object.
 
         This method retrieves allocation-specific attributes from an instance
         of the Process class, packaging the information into a dictionary
@@ -3149,7 +3155,6 @@ class NetlOlca(object):
         else:
             self.logger.warning("No connection opened!")
 
-
     def roll_up_process(self,
                         process_uuid,
                         date,
@@ -3298,7 +3303,6 @@ class NetlOlca(object):
 
         return new_uuid, original_impact_values, rollup_impact_values
 
-
     def run_analysis_for_process(self,
                                 process_uuid,
                                 prov_linking = "only_defaults",
@@ -3309,10 +3313,12 @@ class NetlOlca(object):
 
         Parameters
         ----------
-        client : NetlOlca
-            An instance of NetlOlca class.
         process_uuid : str
             The UUID of the process to analyze.
+        prov_linking : str (optional)
+            The provenance linking option to use for the analysis.
+            Options: ignore_defaults, prefer_defaults, only_defaults
+            Default value: 'only_defaults'
         impact_method_uuid : str, optional
             The UUID of the impact method to use for the analysis.
 
@@ -3373,7 +3379,6 @@ class NetlOlca(object):
         result.dispose()
 
         return all_flows_df, impact_values
-
 
     def run_analysis_for_product_system(self, ps_uuid, impact_method_uuid = None):
         """
@@ -3436,7 +3441,6 @@ class NetlOlca(object):
         self.delete_product_system(ps_uuid)
 
         return result
-
 
     def write(self, o_obj, f_path):
         """Write an olca-schema class object to JSON-LD zip file.
