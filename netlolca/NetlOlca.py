@@ -3429,7 +3429,7 @@ class NetlOlca(object):
         result = self.client.calculate(setup)
 
         # delete the product system
-        self.delete_product_system(self, ps_uuid)
+        self.delete_product_system(ps_uuid)
 
         return result
 
