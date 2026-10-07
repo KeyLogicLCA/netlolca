@@ -3234,7 +3234,6 @@ class NetlOlca(object):
                 new_name,
                 process_description,
                 quant_ref_flow,
-                'LCI_RESULT',
                 process_category
             )
 
