@@ -798,6 +798,11 @@ class NetlOlca(object):
             flow_uuid = row['flow_uuid']
             flow_type = row['flow_type']
 
+            if hasattr(flow_type, "value"):
+                flow_type = flow_type.value
+            if flow_type != o.FlowType.ELEMENTARY_FLOW.value:
+                continue
+
             if unit is None:
                 self.logger.warning(
                     f"{name} | {flow_uuid} has no unit and will be skipped..."
